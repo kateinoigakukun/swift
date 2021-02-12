@@ -155,7 +155,9 @@ SerializationOptions CompilerInvocation::computeSerializationOptions(
     serializationOpts.ImportedHeader = opts.ImplicitObjCHeaderPath;
   serializationOpts.ModuleLinkName = opts.ModuleLinkName;
   serializationOpts.ExtraClangOptions = getClangImporterOptions().ExtraArgs;
-  
+  serializationOpts.PublicDependentLibraries =
+      getIRGenOptions().PublicLinkLibraries;
+
   if (opts.EmitSymbolGraph) {
     if (!opts.SymbolGraphOutputDir.empty()) {
       serializationOpts.SymbolGraphOutputDir = opts.SymbolGraphOutputDir;
@@ -167,7 +169,7 @@ SerializationOptions CompilerInvocation::computeSerializationOptions(
     llvm::sys::path::remove_filename(OutputDir);
     serializationOpts.SymbolGraphOutputDir = OutputDir.str().str();
   }
-  
+
   if (!getIRGenOptions().ForceLoadSymbolName.empty())
     serializationOpts.AutolinkForceLoad = true;
 
