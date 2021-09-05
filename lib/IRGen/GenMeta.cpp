@@ -5393,10 +5393,8 @@ GenericRequirementsMetadata irgen::addGenericRequirements(
           unsigned tag = unsigned(descriptorRef.isIndirect());
           if (protocol->isObjC())
             tag |= 0x02;
-          
-          B.addTaggedRelativeOffset(IGM.RelativeAddressTy,
-                                    descriptorRef.getValue(),
-                                    tag);
+
+          B.addTaggedCompactAddress(descriptorRef.getValue(), tag);
         });
       break;
     }
