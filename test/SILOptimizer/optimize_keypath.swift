@@ -5,7 +5,6 @@
 
 // RUN: %target-build-swift -O %s -o %t/a.out
 // RUN: %target-run %t/a.out | %FileCheck %s -check-prefix=CHECK-OUTPUT
-// REQUIRES: executable_test,swift_stdlib_no_asserts,optimized_stdlib
 // REQUIRES: CPU=arm64 || CPU=x86_64
 
 // REQUIRES: swift_in_compiler
