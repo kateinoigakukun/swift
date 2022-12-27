@@ -75,6 +75,12 @@ size_t BitVector::count() const {
   return total;
 }
 
+void BitVector::add(uintptr_t byte) {
+  constexpr size_t ptr_bit = sizeof(uintptr_t) * CHAR_BIT;
+  for (size_t i = 0; i < ptr_bit; i++)
+    data.push_back(byte >> ((ptr_bit - 1) - i) & 0x1);
+}
+
 void BitVector::add(uint64_t byte) {
   for (size_t i = 0; i < 64; i++)
     data.push_back(byte >> (63 - i) & 0x1);
