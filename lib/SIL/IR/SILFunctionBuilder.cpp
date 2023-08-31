@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/SIL/SILFunctionBuilder.h"
+#include "swift/AST/Attr.h"
 #include "swift/AST/AttrKind.h"
 #include "swift/AST/Availability.h"
 #include "swift/AST/DiagnosticsParse.h"
@@ -177,6 +178,10 @@ void SILFunctionBuilder::addFunctionAttributes(
       else
         F->setWasmExportName(EA->Name);
     }
+  }
+
+  if (auto *EA = Attrs.getAttribute<ExternAttr>()) {
+    F->setWasmImportModuleAndField(EA->ModuleName, EA->Name);
   }
 
   if (Attrs.hasAttribute<UsedAttr>())

@@ -2313,6 +2313,13 @@ namespace decls_block {
                                               BCBlob      // declaration name
                                               >;
 
+  using ExternDeclAttrLayout = BCRecordLayout<Extern_DECL_ATTR,
+                                              BCFixed<1>, // implicit flag
+                                              BCVBR<4>,   // number of bytes in module name
+                                              BCVBR<4>,   // number of bytes in name
+                                              BCBlob      // module name and declaration name
+                                              >;
+
   using DocumentationDeclAttrLayout = BCRecordLayout<
     Documentation_DECL_ATTR,
     BCFixed<1>,         // implicit flag

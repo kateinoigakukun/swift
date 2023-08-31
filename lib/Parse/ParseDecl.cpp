@@ -33,6 +33,7 @@
 #include "swift/Parse/IDEInspectionCallbacks.h"
 #include "swift/Parse/ParseSILSupport.h"
 #include "swift/Parse/Parser.h"
+#include "swift/Parse/ParserResult.h"
 #include "swift/Strings.h"
 #include "swift/Subsystems.h"
 #include "llvm/ADT/PointerUnion.h"
@@ -3097,6 +3098,71 @@ ParserStatus Parser::parseNewDeclAttribute(DeclAttributes &Attributes,
         llvm_unreachable("out of sync with switch");
     }
 
+    break;
+  }
+
+  case DAK_Extern: {
+    if (!consumeIf(tok::l_paren)) {
+      diagnose(Loc, diag::attr_expected_lparen, AttrName,
+               DeclAttribute::isDeclModifier(DK));
+      return makeParserSuccess();
+    }
+    if (Tok.isNot(tok::identifier)) {
+      diagnose(Loc, diag::attr_expected_option_such_as, AttrName, "wasm");
+      return makeParserSuccess();
+    }
+    consumeToken(tok::identifier);
+    if (!consumeIf(tok::comma) || Tok.isNot(tok::identifier) || Tok.getText() != "module") {
+      diagnose(Loc, diag::attr_extern_expected_label, "module");
+      return makeParserSuccess();
+    }
+    consumeToken(tok::identifier);
+
+    if (!consumeIf(tok::colon)) {
+      diagnose(Tok.getLoc(), diag::attr_expected_colon_after_label, "module");
+      return makeParserSuccess();
+    }
+
+    if (Tok.isNot(tok::string_literal)) {
+      diagnose(Loc, diag::attr_expected_string_literal, AttrName);
+      return makeParserSuccess();
+    }
+    llvm::Optional<StringRef> importModuleName =
+        getStringLiteralIfNotInterpolated(Loc, ("'" + AttrName + "'").str());
+    consumeToken(tok::string_literal);
+
+    if (!consumeIf(tok::comma) || Tok.isNot(tok::identifier) || Tok.getText() != "name") {
+      diagnose(Loc, diag::attr_extern_expected_label, "name");
+      return makeParserSuccess();
+    }
+    consumeToken(tok::identifier);
+
+    if (!consumeIf(tok::colon)) {
+      diagnose(Tok.getLoc(), diag::attr_expected_colon_after_label, "name");
+      return makeParserSuccess();
+    }
+
+    if (Tok.isNot(tok::string_literal)) {
+      diagnose(Loc, diag::attr_expected_string_literal, AttrName);
+      return makeParserSuccess();
+    }
+    llvm::Optional<StringRef> importName =
+        getStringLiteralIfNotInterpolated(Loc, ("'" + AttrName + "'").str());
+    consumeToken(tok::string_literal);
+
+    if (!consumeIf(tok::r_paren)) {
+      diagnose(Loc, diag::attr_expected_rparen, AttrName,
+               DeclAttribute::isDeclModifier(DK));
+      return makeParserSuccess();
+    }
+
+    if (!importModuleName.has_value() || !importName.has_value()) {
+      DiscardAttribute = true;
+    }
+    if (!DiscardAttribute)
+      Attributes.add(new (Context) ExternAttr(
+          importModuleName.value(), importName.value(), AtLoc, AttrRange,
+          /*Implicit=*/false));
     break;
   }
 

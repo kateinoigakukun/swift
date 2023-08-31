@@ -1707,6 +1707,8 @@ StringRef DeclAttribute::getAttrName() const {
     }
   case DAK_RawLayout:
     return "_rawLayout";
+  case DAK_Extern:
+    return "_extern";
   }
   llvm_unreachable("bad DeclAttrKind");
 }

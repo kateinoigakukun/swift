@@ -3228,6 +3228,16 @@ public:
     // PatternBindingDecl.
   }
 
+  /// Determine whether the given declaration should not have a definition.
+  static bool requiresNoDefinition(Decl *decl) {
+    if (auto func = dyn_cast<AbstractFunctionDecl>(decl)) {
+      // Function with @_extern should not have a body.
+      return func->getAttrs().hasAttribute<ExternAttr>();
+    }
+    // Everything else *may* require a definition.
+    return false;
+  }
+
   /// Determine whether the given declaration requires a definition.
   ///
   /// Only valid for declarations that can have definitions, i.e.,
@@ -3245,6 +3255,7 @@ public:
     // Functions can have _silgen_name, semantics, and NSManaged attributes.
     if (auto func = dyn_cast<AbstractFunctionDecl>(decl)) {
       if (func->getAttrs().hasAttribute<SILGenNameAttr>() ||
+          func->getAttrs().hasAttribute<ExternAttr>() ||
           func->getAttrs().hasAttribute<SemanticsAttr>() ||
           func->getAttrs().hasAttribute<NSManagedAttr>())
         return false;
@@ -3369,6 +3380,9 @@ public:
     if (requiresDefinition(FD) && !FD->hasBody()) {
       // Complain if we should have a body.
       FD->diagnose(diag::func_decl_without_brace);
+    } else if (requiresNoDefinition(FD) && FD->hasBody()) {
+      // Complain if we have a body but shouldn't.
+      FD->diagnose(diag::func_decl_no_body_expected);
     } else if (FD->getDeclContext()->isLocalContext()) {
       // Check local function bodies right away.
       (void)FD->getTypecheckedBody();
