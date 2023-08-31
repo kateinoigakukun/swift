@@ -3087,7 +3087,7 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
       auto *theAttr = cast<ExposeAttr>(DA);
       auto abbrCode = S.DeclTypeAbbrCodes[ExposeDeclAttrLayout::Code];
       ExposeDeclAttrLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode,
-                                       theAttr->isImplicit(), theAttr->Name);
+                                       (unsigned)theAttr->getExposureKind(), theAttr->isImplicit(), theAttr->Name);
       return;
     }
 

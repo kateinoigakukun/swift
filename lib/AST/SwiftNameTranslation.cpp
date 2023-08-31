@@ -157,7 +157,7 @@ StringRef
 swift::cxx_translation::getNameForCxx(const ValueDecl *VD,
                                       CustomNamesOnly_t customNamesOnly) {
   if (const auto *Expose = VD->getAttrs().getAttribute<ExposeAttr>()) {
-    if (!Expose->Name.empty())
+    if (Expose->getExposureKind() == ExposureKind::Cxx && !Expose->Name.empty())
       return Expose->Name;
   }
 
