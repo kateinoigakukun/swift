@@ -325,7 +325,7 @@ set(swiftCore_common_options
                   FRAMEWORK_DEPENDS
                     ${swift_core_framework_depends}
                   SWIFT_COMPILE_FLAGS
-                    ${swift_stdlib_compile_flags} -Xcc -DswiftCore_EXPORTS ${SWIFT_STANDARD_LIBRARY_SWIFT_FLAGS})
+                    ${swift_stdlib_compile_flags} -Xcc -DswiftCore_EXPORTS -enable-experimental-feature Extern ${SWIFT_STANDARD_LIBRARY_SWIFT_FLAGS})
 
 # The copy_shim_headers target dependency is required to let the
 # build system know that there's a rule to produce the shims
