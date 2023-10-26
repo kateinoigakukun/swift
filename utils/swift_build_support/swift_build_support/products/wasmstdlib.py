@@ -96,6 +96,10 @@ class WasmStdlib(cmake_product.CMakeProduct):
                                   os.path.join(self.source_dir, '..',
                                                'swift-experimental-string-processing'))
 
+        self.cmake_options.define('CMAKE_C_FLAGS', '-mtail-call')
+        self.cmake_options.define('CMAKE_CXX_FLAGS', '-mtail-call')
+        self.cmake_options.define('SWIFT_STDLIB_EXTRA_SWIFT_COMPILE_FLAGS', '-Xcc;-mtail-call')
+
         # Test configuration
         self.cmake_options.define('SWIFT_INCLUDE_TESTS:BOOL', 'TRUE')
         self.cmake_options.define('SWIFT_ENABLE_SOURCEKIT_TESTS:BOOL', 'FALSE')
