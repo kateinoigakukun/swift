@@ -2061,7 +2061,7 @@ void IRGenerator::emitDynamicReplacements() {
   autoReplacementsArray.finishAndAddTo(autoReplacements);
   auto autoReplVar = autoReplacements.finishAndCreateGlobal(
       "\x01l_auto_dynamic_replacements", IGM.getPointerAlignment(),
-      /*isConstant*/ true, llvm::GlobalValue::InternalLinkage);
+      /*isConstant*/ true, llvm::GlobalValue::PrivateLinkage);
   autoReplVar->setSection(getDynamicReplacementSection(IGM));
   IGM.addUsedGlobal(autoReplVar);
 
@@ -2097,7 +2097,7 @@ void IRGenerator::emitDynamicReplacements() {
   someReplacementsArray.finishAndAddTo(autoReplacementsSome);
   auto autoReplVar2 = autoReplacementsSome.finishAndCreateGlobal(
       "\x01l_auto_dynamic_replacements_some", IGM.getPointerAlignment(),
-      /*isConstant*/ true, llvm::GlobalValue::InternalLinkage);
+      /*isConstant*/ true, llvm::GlobalValue::PrivateLinkage);
   autoReplVar2->setSection(getDynamicReplacementSomeSection(IGM));
   IGM.addUsedGlobal(autoReplVar2);
 }
@@ -2294,7 +2294,7 @@ void IRGenerator::emitEntryPointInfo() {
   entrypointInfo.addInt(IGM.Int32Ty, flags);
   auto var = entrypointInfo.finishAndCreateGlobal(
       "\x01l_entry_point", Alignment(4),
-      /*isConstant*/ true, llvm::GlobalValue::InternalLinkage);
+      /*isConstant*/ true, llvm::GlobalValue::PrivateLinkage);
   var->setSection(getEntryPointSection(IGM));
   IGM.addUsedGlobal(var);
 }
@@ -4358,7 +4358,7 @@ llvm::Constant *IRGenModule::emitSwiftProtocols(bool asContiguousArray) {
         LinkEntity::forProtocolDescriptorRecord(protocol).mangleAsString();
     auto var =
         new llvm::GlobalVariable(Module, ProtocolRecordTy, /*isConstant*/ true,
-                                 llvm::GlobalValue::InternalLinkage,
+                                 llvm::GlobalValue::PrivateLinkage,
                                  /*initializer*/ nullptr, recordMangledName);
 
     auto descriptorRef = getAddrOfLLVMVariableOrGOTEquivalent(entity);
@@ -4477,7 +4477,7 @@ llvm::Constant *IRGenModule::emitProtocolConformances(bool asContiguousArray) {
             .mangleAsString();
     auto var = new llvm::GlobalVariable(
         Module, RelativeAddressTy, /*isConstant*/ true,
-        llvm::GlobalValue::InternalLinkage, /*initializer*/ nullptr,
+        llvm::GlobalValue::PrivateLinkage, /*initializer*/ nullptr,
         recordMangledName);
 
     auto descriptorRef = getAddrOfLLVMVariableOrGOTEquivalent(entity);
@@ -4608,7 +4608,7 @@ llvm::Constant *IRGenModule::emitTypeMetadataRecords(bool asContiguousArray) {
 
       auto var = new llvm::GlobalVariable(
           Module, TypeMetadataRecordTy, /*isConstant*/ true,
-          llvm::GlobalValue::InternalLinkage, /*initializer*/ nullptr,
+          llvm::GlobalValue::PrivateLinkage, /*initializer*/ nullptr,
           recordMangledName);
 
       auto record = generateRecord(ref, var, {0});
@@ -4664,7 +4664,7 @@ void IRGenModule::emitAccessibleFunctions() {
 
     auto var = new llvm::GlobalVariable(
         Module, AccessibleFunctionRecordTy, /*isConstant*/ true,
-        llvm::GlobalValue::InternalLinkage, /*initializer*/ nullptr,
+        llvm::GlobalValue::PrivateLinkage, /*initializer*/ nullptr,
         mangledRecordName);
 
     ConstantInitBuilder builder(*this);
