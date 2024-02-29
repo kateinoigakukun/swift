@@ -45,6 +45,7 @@ module SwiftWASILibc [system] {
   header "netinet/tcp.h"
   header "nl_types.h"
   header "poll.h"
+  header "pthread.h"
   header "regex.h"
   header "sched.h"
   header "search.h"
