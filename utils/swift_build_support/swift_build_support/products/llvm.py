@@ -249,6 +249,7 @@ class LLVM(cmake_product.CMakeProduct):
             ):
                 build_targets.extend([
                     'FileCheck',
+                    'split-file',
                     'not',
                     'llvm-nm',
                     'llvm-size'
