@@ -123,6 +123,7 @@ static const SupportedConditionalValue SupportedConditionalCompilationTargetEnvi
   "simulator",
   { "macabi", "macCatalyst" },
   "macCatalyst", // A synonym for "macabi" when compiling for iOS
+  "threads", // For wasm32-unknown-wasi-threads
 };
 
 static const SupportedConditionalValue SupportedConditionalCompilationPtrAuthSchemes[] = {
@@ -577,6 +578,10 @@ std::pair<bool, bool> LangOptions::setTarget(llvm::Triple triple) {
   if (tripleIsMacCatalystEnvironment(Target))
     addPlatformConditionValue(PlatformConditionKind::TargetEnvironment,
                               "macabi");
+
+  if (Target.getOS() == llvm::Triple::WASI && Target.getEnvironmentName() == "threads")
+    addPlatformConditionValue(PlatformConditionKind::TargetEnvironment,
+                              "threads");
 
   // Set the "_hasHasAtomicBitWidth" platform condition.
   setHasAtomicBitWidth(triple);
