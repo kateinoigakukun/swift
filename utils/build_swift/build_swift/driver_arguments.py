@@ -755,6 +755,8 @@ def create_argument_parser():
                 'separate build directory ')
     option(['--wasmkit'], toggle_true('build_wasmkit'),
            help='build WasmKit')
+    option('--enable-wasi-threads', toggle_true,
+           help='enable threads support in stdlib for WASI target')
 
     option('--xctest', toggle_true('build_xctest'),
            help='build xctest')

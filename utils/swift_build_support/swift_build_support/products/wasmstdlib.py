@@ -79,13 +79,19 @@ class WasmStdlib(cmake_product.CMakeProduct):
         self.cmake_options.define('SWIFT_PRIMARY_VARIANT_SDK:STRING', 'WASI')
         self.cmake_options.define('SWIFT_PRIMARY_VARIANT_ARCH:STRING', 'wasm32')
         self.cmake_options.define('SWIFT_SDKS:STRING', 'WASI')
+        if self.args.enable_wasi_threads:
+            self.cmake_options.define('SWIFT_STDLIB_EXTRA_C_COMPILE_FLAGS:STRING',
+                                      '-mthread-model;posix;-pthread;-ftls-model=local-exec')
+            self.cmake_options.define('SWIFT_STDLIB_EXTRA_SWIFT_COMPILE_FLAGS:STRING',
+                                      '-Xcc;-matomics;-Xcc;-mbulk-memory;-Xcc;-mthread-model;-Xcc;posix;-Xcc;-pthread;-Xcc;-ftls-model=local-exec')
         # Build only static stdlib
         self.cmake_options.define('SWIFT_BUILD_STATIC_STDLIB:BOOL', 'TRUE')
         self.cmake_options.define('SWIFT_BUILD_DYNAMIC_STDLIB:BOOL', 'FALSE')
         self.cmake_options.define(
             'SWIFT_STDLIB_SINGLE_THREADED_CONCURRENCY:BOOL', 'TRUE')
         self.cmake_options.define('SWIFT_ENABLE_DISPATCH:BOOL', 'FALSE')
-        self.cmake_options.define('SWIFT_THREADING_PACKAGE:STRING', 'none')
+        threading_package = 'pthreads' if self.args.enable_wasi_threads else 'none'
+        self.cmake_options.define('SWIFT_THREADING_PACKAGE:STRING', threading_package)
         self.cmake_options.define(
             'SWIFT_STDLIB_SUPPORTS_BACKTRACE_REPORTING:BOOL', 'FALSE')
         self.cmake_options.define('SWIFT_STDLIB_HAS_DLADDR:BOOL', 'FALSE')
@@ -97,6 +103,8 @@ class WasmStdlib(cmake_product.CMakeProduct):
         self.cmake_options.define('SWIFT_PATH_TO_STRING_PROCESSING_SOURCE:PATH',
                                   os.path.join(self.source_dir, '..',
                                                'swift-experimental-string-processing'))
+        if self.args.enable_wasi_threads:
+            self.cmake_options.define('SWIFT_ENABLE_WASI_THREADS:BOOL', 'TRUE')
 
         # Test configuration
         self.cmake_options.define('SWIFT_INCLUDE_TESTS:BOOL', 'TRUE')

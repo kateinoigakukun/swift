@@ -55,6 +55,8 @@ class WASILibc(product.Product):
         # check-symbols. The directory is required during sysroot installation step.
         os.makedirs(os.path.join(sysroot_build_dir, "share"), exist_ok=True)
 
+        thread_model = 'posix' if self.args.enable_wasi_threads else 'single'
+
         shell.call([
             'make', 'install',
             '-j', str(build_jobs),
@@ -71,6 +73,7 @@ class WASILibc(product.Product):
             'CC=' + os.path.join(clang_tools_path, 'clang'),
             'AR=' + os.path.join(llvm_tools_path, 'llvm-ar'),
             'NM=' + os.path.join(llvm_tools_path, 'llvm-nm'),
+            'THREAD_MODEL=' + thread_model,
         ])
 
     @classmethod
@@ -125,12 +128,17 @@ class WasmLLVMRuntimeLibs(cmake_product.CMakeProduct):
         llvm_tools_path = self.args.native_llvm_tools_path or llvm_build_dir
         clang_tools_path = self.args.native_clang_tools_path or llvm_build_dir
 
+        enable_wasi_threads = 'TRUE' if self.args.enable_wasi_threads else 'FALSE'
+
         self.cmake_options.define('CMAKE_SYSROOT:PATH',
                                   WASILibc.sysroot_build_path(build_root, host_target))
         self.cmake_options.define('LLVM_ENABLE_RUNTIMES:STRING',
                                   'libcxx;libcxxabi;compiler-rt')
-        self.cmake_options.define('LIBCXX_LIBDIR_SUFFIX:STRING', '/wasm32-wasi')
-        self.cmake_options.define('LIBCXXABI_LIBDIR_SUFFIX:STRING', '/wasm32-wasi')
+        libdir_suffix = '/wasm32-wasi'
+        if self.args.enable_wasi_threads:
+            libdir_suffix = '/wasm32-wasi-threads'
+        self.cmake_options.define('LIBCXX_LIBDIR_SUFFIX:STRING', libdir_suffix)
+        self.cmake_options.define('LIBCXXABI_LIBDIR_SUFFIX:STRING', libdir_suffix)
         self.cmake_options.define('CMAKE_STAGING_PREFIX:PATH', '/')
 
         self.cmake_options.define('COMPILER_RT_DEFAULT_TARGET_ARCH:STRING', 'wasm32')
@@ -155,19 +163,27 @@ class WasmLLVMRuntimeLibs(cmake_product.CMakeProduct):
                                   os.path.join(clang_tools_path, 'clang'))
         self.cmake_options.define('CMAKE_CXX_COMPILER:STRING',
                                   os.path.join(clang_tools_path, 'clang++'))
+
+        c_flags = []
         # Explicitly disable exceptions even though it's usually implicitly disabled by
         # LIBCXX_ENABLE_EXCEPTIONS because the CMake feature check fails to detect
         # -fno-exceptions support in clang due to missing compiler-rt while configuring
         # as mono project.
-        self.cmake_options.define('CMAKE_CXX_FLAGS:STRING', '-fno-exceptions')
+        cxx_flags = ['-fno-exceptions']
+        if self.args.enable_wasi_threads:
+            c_flags.append('-pthread')
+            cxx_flags.append('-pthread')
+        self.cmake_options.define('CMAKE_C_FLAGS:STRING', ' '.join(c_flags))
+        self.cmake_options.define('CMAKE_CXX_FLAGS:STRING', ' '.join(cxx_flags))
 
-        self.cmake_options.define('CMAKE_C_COMPILER_TARGET:STRING', 'wasm32-wasi')
-        self.cmake_options.define('CMAKE_CXX_COMPILER_TARGET:STRING', 'wasm32-wasi')
+        target_triple = 'wasm32-wasi-threads' if self.args.enable_wasi_threads else 'wasm32-wasi'
+        self.cmake_options.define('CMAKE_C_COMPILER_TARGET:STRING', target_triple)
+        self.cmake_options.define('CMAKE_CXX_COMPILER_TARGET:STRING', target_triple)
 
         self.cmake_options.define('CXX_SUPPORTS_CXX11:BOOL', 'TRUE')
 
-        self.cmake_options.define('LIBCXX_ENABLE_THREADS:BOOL', 'FALSE')
-        self.cmake_options.define('LIBCXX_HAS_PTHREAD_API:BOOL', 'FALSE')
+        self.cmake_options.define('LIBCXX_ENABLE_THREADS:BOOL', enable_wasi_threads)
+        self.cmake_options.define('LIBCXX_HAS_PTHREAD_API:BOOL', enable_wasi_threads)
         self.cmake_options.define('LIBCXX_HAS_EXTERNAL_THREAD_API:BOOL', 'FALSE')
         self.cmake_options.define('LIBCXX_BUILD_EXTERNAL_THREAD_LIBRARY:BOOL', 'FALSE')
         self.cmake_options.define('LIBCXX_HAS_WIN32_THREAD_API:BOOL', 'FALSE')
@@ -182,8 +198,8 @@ class WasmLLVMRuntimeLibs(cmake_product.CMakeProduct):
         self.cmake_options.define('LIBCXXABI_ENABLE_EXCEPTIONS:BOOL', 'FALSE')
         self.cmake_options.define('LIBCXXABI_ENABLE_SHARED:BOOL', 'FALSE')
         self.cmake_options.define('LIBCXXABI_SILENT_TERMINATE:BOOL', 'TRUE')
-        self.cmake_options.define('LIBCXXABI_ENABLE_THREADS:BOOL', 'FALSE')
-        self.cmake_options.define('LIBCXXABI_HAS_PTHREAD_API:BOOL', 'FALSE')
+        self.cmake_options.define('LIBCXXABI_ENABLE_THREADS:BOOL', enable_wasi_threads)
+        self.cmake_options.define('LIBCXXABI_HAS_PTHREAD_API:BOOL', enable_wasi_threads)
         self.cmake_options.define('LIBCXXABI_HAS_EXTERNAL_THREAD_API:BOOL', 'FALSE')
         self.cmake_options.define('LIBCXXABI_BUILD_EXTERNAL_THREAD_LIBRARY:BOOL',
                                   'FALSE')

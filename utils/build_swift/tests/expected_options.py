@@ -131,6 +131,7 @@ EXPECTED_DEFAULTS = {
     'build_xctest': False,
     'build_wasmstdlib': False,
     'build_wasmkit': False,
+    'enable_wasi_threads': False,
     'cmake_c_launcher': None,
     'cmake_cxx_launcher': None,
     'clang_compiler_version': None,
