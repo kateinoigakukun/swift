@@ -53,6 +53,8 @@ private:
 
   void scanCOFF(const llvm::object::COFFObjectFile *O);
 
+  void scanWasm(const llvm::object::WasmObjectFile *O);
+
   bool isMachOWithPtrAuth() const;
 
 public:

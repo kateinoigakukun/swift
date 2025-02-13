@@ -21,7 +21,9 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Support/LEB128.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -32,6 +34,7 @@
 #include "swift/Remote/MetadataReader.h"
 #include "swift/RemoteInspection/DescriptorFinder.h"
 #include "swift/RemoteInspection/GenericMetadataCacheEntry.h"
+#include "swift/RemoteInspection/ObjectSectionReader.h"
 #include "swift/RemoteInspection/Records.h"
 #include "swift/RemoteInspection/RuntimeInternals.h"
 #include "swift/RemoteInspection/TypeLowering.h"
@@ -114,6 +117,16 @@ namespace reflection {
 
 using swift::remote::MemoryReader;
 using swift::remote::RemoteAddress;
+
+class ConstMemoryBlock {
+  const void *data;
+  size_t size;
+public:
+  ConstMemoryBlock(const void *data, size_t size) : data(data), size(size) {}
+
+  const void *base() const { return data; }
+  size_t allocatedSize() const { return size; }
+};
 
 template <typename Runtime>
 class ReflectionContext
@@ -803,6 +816,488 @@ public:
     }
   }
 
+  std::optional<uint32_t> readWasmSections(
+      ConstMemoryBlock FileBuffer,
+      llvm::SmallVector<llvm::StringRef, 1> PotentialModuleNames = {}) {
+
+    auto readULEB128 = [&](uint64_t &Offset, uint64_t *value) -> bool {
+      const uint8_t *bytes = static_cast<const uint8_t *>(FileBuffer.base());
+      const uint8_t *start = bytes + Offset;
+      const uint8_t *end = bytes + FileBuffer.allocatedSize();
+      unsigned n;
+      const char *error = nullptr;
+      *value = llvm::decodeULEB128(start, &n, end, &error);
+      if (error)
+        return false;
+      Offset += n;
+      return true;
+    };
+
+    auto readWasmString = [&](uint64_t &Offset) -> std::optional<llvm::StringRef> {
+      uint64_t size;
+      if (!readULEB128(Offset, &size))
+        return std::nullopt;
+      if (Offset + size > FileBuffer.allocatedSize())
+        return std::nullopt;
+      auto begin = static_cast<const char *>(FileBuffer.base()) + Offset;
+      Offset += size;
+      return llvm::StringRef(begin, size);
+    };
+
+    auto readData = [&](uint64_t &Offset, size_t size) -> const void * {
+      const uint8_t *bytes = static_cast<const uint8_t *>(FileBuffer.base());
+      const uint8_t *start = bytes + Offset;
+      if (Offset + size > FileBuffer.allocatedSize()) {
+        return nullptr;
+      }
+      const void *value = reinterpret_cast<const void *>(start);
+      Offset += size;
+      return value;
+    };
+
+    auto readU8 = [&](uint64_t &Offset, uint8_t *value) -> bool {
+      const void *data = readData(Offset, 1);
+      if (!data)
+        return false;
+      *value = *static_cast<const uint8_t *>(data);
+      return true;
+    };
+
+    auto consumeLimits = [&](uint64_t &Offset) -> bool {
+      uint8_t LimitsFlags;
+      if (!readU8(Offset, &LimitsFlags)) {
+        return false;
+      }
+      uint64_t Min;
+      if (!readULEB128(Offset, &Min)) {
+        return false;
+      }
+      (void)Min;
+      if (LimitsFlags & llvm::wasm::WASM_LIMITS_FLAG_HAS_MAX) {
+        uint64_t Max;
+        if (!readULEB128(Offset, &Max)) {
+          return false;
+        }
+        (void)Max;
+      }
+      return true;
+    };
+    auto consumeByte = [&](uint64_t &Offset) -> bool {
+      uint8_t Value;
+      if (!readU8(Offset, &Value)) {
+        return false;
+      }
+      (void)Value;
+      return true;
+    };
+
+    uint64_t NumberOfImportedFunctions = 0;
+    std::optional<std::pair<uint64_t, uint64_t>> DataSection;
+    std::optional<std::pair<uint64_t, uint64_t>> NameSection;
+    std::optional<uint64_t> StartFuncIdx;
+    std::optional<std::pair<uint64_t, uint64_t>> CodeSection;
+
+    // Find the data section and name section.
+    {
+      uint64_t Cursor = sizeof(llvm::wasm::WasmMagic) +
+                    sizeof(llvm::wasm::WasmVersion);
+      while (true) {
+        uint8_t SectionId;
+        if (!readU8(Cursor, &SectionId))
+          break;
+
+        uint64_t SectionSize;
+        if (!readULEB128(Cursor, &SectionSize))
+          break;
+
+        auto EndOfSection = Cursor + SectionSize;
+
+        switch (SectionId) {
+          case llvm::wasm::WASM_SEC_CUSTOM: {
+            auto PayloadStart = Cursor;
+            auto Name = readWasmString(Cursor);
+            if (Name == "name") {
+              NameSection = std::make_pair(Cursor, SectionSize - (Cursor - PayloadStart));
+            }
+            break;
+          }
+          case llvm::wasm::WASM_SEC_IMPORT: {
+            uint64_t ImportCount;
+            if (!readULEB128(Cursor, &ImportCount)) {
+              break;
+            }
+            for (uint64_t i = 0; i < ImportCount; ++i) {
+              // module name
+              if (!readWasmString(Cursor)) {
+                break;
+              }
+              // import name
+              if (!readWasmString(Cursor)) {
+                break;
+              }
+              // descriptor
+              uint8_t Kind;
+              if (!readU8(Cursor, &Kind)) {
+                break;
+              }
+              
+              switch (Kind) {
+                case llvm::wasm::WASM_EXTERNAL_FUNCTION: {
+                  // type index
+                  uint64_t TypeIndex;
+                  if (!readULEB128(Cursor, &TypeIndex)) {
+                    break;
+                  }
+                  (void)TypeIndex;
+
+                  // Record the number of imported functions.
+                  NumberOfImportedFunctions++;
+                  break;
+                }
+                case llvm::wasm::WASM_EXTERNAL_TABLE: {
+                  uint8_t ElemType;
+                  if (!readU8(Cursor, &ElemType)) {
+                    break;
+                  }
+                  (void)ElemType;
+                  consumeLimits(Cursor);
+                  break;
+                }
+                case llvm::wasm::WASM_EXTERNAL_MEMORY: {
+                  consumeLimits(Cursor);
+                  break;
+                }
+                case llvm::wasm::WASM_EXTERNAL_GLOBAL: {
+                  consumeByte(Cursor); // value type
+                  consumeByte(Cursor); // mutable
+                  break;
+                }
+                default: {
+                  break;
+                }
+              }
+            }
+            break;
+          }
+          case llvm::wasm::WASM_SEC_START: {
+            uint64_t FuncIdx;
+            if (!readULEB128(Cursor, &FuncIdx)) {
+              break;
+            }
+            StartFuncIdx = FuncIdx;
+            break;
+          }
+          case llvm::wasm::WASM_SEC_CODE: {
+            CodeSection = std::make_pair(Cursor, SectionSize);
+            break;
+          }
+          case llvm::wasm::WASM_SEC_DATA: {
+            DataSection = std::make_pair(Cursor, SectionSize);
+            break;
+          }
+        }
+
+        Cursor = EndOfSection;
+      }
+    }
+
+    struct DataSegment {
+      uint64_t ImageOffset;
+      uint64_t Offset;
+      std::optional<StringRef> Name;
+      uint32_t MemoryIndex;
+      uint64_t Size;
+      uint64_t InitFlags;
+    };
+
+    std::vector<DataSegment> DataSegments;
+    // Parse the data section.
+    {
+      if (!DataSection) {
+        return std::nullopt;
+      }
+
+      uint64_t Cursor = DataSection->first;
+      uint64_t Size = DataSection->second;
+      uint64_t End = Cursor + Size;
+      uint64_t Count;
+      if (!readULEB128(Cursor, &Count)) {
+        return std::nullopt;
+      }
+
+      for (uint64_t i = 0; i < Count; ++i) {
+        uint64_t MemoryIndex = 0;
+        uint64_t Offset = 0;
+        uint64_t initFlags;
+        if (!readULEB128(Cursor, &initFlags)) {
+          return std::nullopt;
+        }
+
+        if (initFlags & llvm::wasm::WASM_DATA_SEGMENT_HAS_MEMINDEX) {
+          if (!readULEB128(Cursor, &MemoryIndex)) {
+            return std::nullopt;
+          }
+        }
+        if ((initFlags & llvm::wasm::WASM_DATA_SEGMENT_IS_PASSIVE) == 0) {
+          // Read the active offset of the data segment.
+          uint8_t opcode;
+          if (!readU8(Cursor, &opcode)) {
+            return std::nullopt;
+          }
+          if (opcode != llvm::wasm::WASM_OPCODE_I32_CONST) {
+            return std::nullopt;
+          }
+
+          if (!readULEB128(Cursor, &Offset)) {
+            return std::nullopt;
+          }
+
+          uint8_t end_opcode;
+          if (!readU8(Cursor, &end_opcode)) {
+            return std::nullopt;
+          }
+          if (end_opcode != llvm::wasm::WASM_OPCODE_END) {
+            return std::nullopt;
+          }
+        } else {
+          // For passive data segments, try to guess the offset from __wasm_init_memory later
+        }
+
+        if (!readULEB128(Cursor, &Size)) {
+          return std::nullopt;
+        }
+
+        DataSegment segment{
+            Cursor,
+            Offset,
+            std::nullopt,
+            static_cast<uint32_t>(MemoryIndex),
+            Size,
+            initFlags,
+        };
+
+        DataSegments.push_back(segment);
+        Cursor += segment.Size;
+      }
+
+      if (Cursor != End) {
+        return std::nullopt;
+      }
+    }
+
+    // Parse the name section.
+    {
+      if (!NameSection)
+        return std::nullopt;
+
+      auto Cursor = NameSection->first;
+      auto Size = NameSection->second;
+      auto End = Cursor + Size;
+
+      while (Cursor < End) {
+        uint8_t Type;
+        if (!readU8(Cursor, &Type)) {
+          return std::nullopt;
+        }
+
+        uint64_t Size;
+        if (!readULEB128(Cursor, &Size)) {
+          return std::nullopt;
+        }
+
+        if (Type != llvm::wasm::WASM_NAMES_DATA_SEGMENT) {
+          Cursor += Size;
+          continue;
+        }
+
+        // Parse the data segment names.
+        uint64_t Count;
+        if (!readULEB128(Cursor, &Count)) {
+          return std::nullopt;
+        }
+
+        for (uint64_t i = 0; i < Count; ++i) {
+          uint64_t Index;
+          if (!readULEB128(Cursor, &Index)) {
+            return std::nullopt;
+          }
+
+          if (Index >= DataSegments.size()) {
+            return std::nullopt;
+          }
+
+          auto Name = readWasmString(Cursor);
+          if (!Name) {
+            return std::nullopt;
+          }
+
+          DataSegments[Index].Name = Name;
+        }
+      }
+    }
+
+    auto findFunctionCode = [&](uint64_t Index) -> std::pair<uint64_t, uint64_t> {
+      if (!CodeSection)
+        return {0, 0};
+
+      auto Cursor = CodeSection->first;
+      auto Size = CodeSection->second;
+      auto End = Cursor + Size;
+      uint64_t CurrentIndex = NumberOfImportedFunctions;
+      uint64_t NumOfCode = 0;
+      if (!readULEB128(Cursor, &NumOfCode)) {
+        return {0, 0};
+      }
+      while (Cursor < End) {
+        uint64_t BodySize;
+        if (!readULEB128(Cursor, &BodySize)) {
+          return {0, 0};
+        }
+        if (CurrentIndex == Index) {
+          return std::make_pair(Cursor, BodySize);
+        }
+        Cursor += BodySize;
+        ++CurrentIndex;
+      }
+      return {0, 0};
+    };
+
+    // Interpret the __wasm_init_memory function to derive the offsets of the data segments.
+    bool IsInitMemoryInterpreted = false;
+    auto lazyInterpretInitMemory = [&]() {
+      if (IsInitMemoryInterpreted)
+        return;
+      IsInitMemoryInterpreted = true;
+      if (!StartFuncIdx)
+        return;
+      // Find the code for the __wasm_init_memory function, which is usually registered as the start function.
+      auto Code = findFunctionCode(*StartFuncIdx);
+      if (!Code.first)
+        return;
+      uint64_t CodePtr = Code.first;
+      uint64_t CodeSize = Code.second;
+      uint64_t CodeEnd = CodePtr + CodeSize;
+      // The __wasm_init_memory function does not have any parameters or locals.
+      uint64_t LocalCount;
+      if (!readULEB128(CodePtr, &LocalCount)) {
+        return;
+      }
+      if (LocalCount != 0) {
+        return;
+      }
+
+      size_t BodySize = CodeEnd - CodePtr;
+      auto Body = readData(CodePtr, BodySize);
+      if (!Body) {
+        return;
+      }
+
+      llvm::DataExtractor DE(
+          llvm::ArrayRef<uint8_t>(static_cast<const uint8_t *>(Body), BodySize),
+          true, 4);
+      WasmSectionReader::InitMemoryInterpreter Interpreter(DE);
+      while (true) {
+        llvm::Expected<std::optional<reflection::WasmSectionReader::
+                                       InitMemoryInterpreter::SegmentInitInfo>>
+          MaybeSegment = Interpreter.next();
+        if (!MaybeSegment) {
+          auto Err = MaybeSegment.takeError();
+          llvm::report_fatal_error(std::move(Err));
+          return;
+        }
+        auto Segment = MaybeSegment.get();
+        if (!Segment) {
+          break; // No more segments to interpret.
+        }
+        DataSegments[Segment->first].Offset = Segment->second;
+      }
+    };
+
+    auto findDataSegment = [&](llvm::StringRef Name) -> std::pair<RemoteRef<void>, uint64_t> {
+      for (auto &Segment : DataSegments) {
+        if (Segment.Name && Segment.Name == Name) {
+          if ((Segment.InitFlags & llvm::wasm::WASM_DATA_SEGMENT_IS_PASSIVE) != 0) {
+            lazyInterpretInitMemory();
+          }
+
+          const void *Data = readData(Segment.ImageOffset, Segment.Size);
+          if (!Data)
+            return {nullptr, 0};
+          // Copy the data and own it.
+          auto DataCopy = malloc(Segment.Size);
+          memcpy(DataCopy, Data, Segment.Size);
+          auto DataRef = RemoteRef<void>(Segment.Offset, DataCopy);
+          MemoryReader::ReadBytesResult Result(DataCopy, [](const void *ptr) {
+            free(const_cast<void *>(ptr));
+          });
+          this->savedBuffers.push_back(std::move(Result));
+          return std::make_pair(DataRef, Segment.Size);
+        }
+      }
+      return {nullptr, 0};
+    };
+    SwiftObjectFileFormatELF ObjectFileFormat;
+    auto FieldMdSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::fieldmd));
+    auto AssocTySec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::assocty));
+    auto BuiltinTySec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::builtin));
+    auto CaptureSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::capture));
+    auto TypeRefMdSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::typeref));
+    auto ReflStrMdSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::reflstr));
+    auto ConformMdSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::conform));
+    auto MPEnumMdSec = findDataSegment(
+        ObjectFileFormat.getSectionName(ReflectionSectionKind::mpenum));
+
+    if (FieldMdSec.first == nullptr &&
+        AssocTySec.first == nullptr &&
+        BuiltinTySec.first == nullptr &&
+        CaptureSec.first == nullptr &&
+        TypeRefMdSec.first == nullptr &&
+        ReflStrMdSec.first == nullptr &&
+        ConformMdSec.first == nullptr &&
+        MPEnumMdSec.first == nullptr)
+      return std::nullopt;
+
+    ReflectionInfo Info = {{FieldMdSec.first, FieldMdSec.second},
+                           {AssocTySec.first, AssocTySec.second},
+                           {BuiltinTySec.first, BuiltinTySec.second},
+                           {CaptureSec.first, CaptureSec.second},
+                           {TypeRefMdSec.first, TypeRefMdSec.second},
+                           {ReflStrMdSec.first, ReflStrMdSec.second},
+                           {ConformMdSec.first, ConformMdSec.second},
+                           {MPEnumMdSec.first, MPEnumMdSec.second},
+                           PotentialModuleNames};
+    return this->addReflectionInfo(Info);
+  }
+
+  std::optional<uint32_t>
+  readWasm(ConstMemoryBlock FileBuffer,
+           llvm::SmallVector<llvm::StringRef, 1> PotentialModuleNames = {}) {
+    // Check magic bytes and version.
+    if (FileBuffer.allocatedSize() < sizeof(llvm::wasm::WasmMagic) + sizeof(uint32_t)) {
+      return std::nullopt;
+    }
+
+    auto Magic = FileBuffer.base();
+    if (memcmp(Magic, llvm::wasm::WasmMagic, sizeof(llvm::wasm::WasmMagic))) {
+      return std::nullopt;
+    }
+
+    auto Version = static_cast<const uint8_t *>(FileBuffer.base()) +
+                   sizeof(llvm::wasm::WasmMagic);
+    if (memcmp(Version, &llvm::wasm::WasmVersion, sizeof(uint32_t))) {
+      return std::nullopt;
+    }
+
+    return readWasmSections(FileBuffer, PotentialModuleNames);
+  }
+
   /// On success returns the ID of the newly registered Reflection Info.
   std::optional<uint32_t>
   addImage(RemoteAddress ImageStart,
@@ -840,6 +1335,13 @@ public:
       return readELF(ImageStart, std::optional<llvm::sys::MemoryBlock>(),
                      PotentialModuleNames);
     }
+
+    // // Wasm.
+    // if (MagicBytes[0] == llvm::wasm::WasmMagic[0] &&
+    //     MagicBytes[1] == llvm::wasm::WasmMagic[1] &&
+    //     MagicBytes[2] == llvm::wasm::WasmMagic[2]) {
+    //   return readWasm(ImageStart, PotentialModuleNames);
+    // }
 
     // We don't recognize the format.
     return std::nullopt;
@@ -1797,7 +2299,9 @@ private:
       // This cuts off high bits if our size_t doesn't match the target's. We
       // only read the Kind bits which are at the bottom, so that's OK here.
       // Beware of this when reading anything else.
-      TaskStatusRecordFlags Flags{RecordObj->Flags};
+      // HACK: `TaskStatusRecordFlags` is defined with `size_t` but we should
+      // template it on `Runtime::StoredSize` instead.
+      TaskStatusRecordFlags Flags{static_cast<size_t>(RecordObj->Flags)};
       auto Kind = Flags.getKind();
 
       StoredPointer ChildTask = 0;

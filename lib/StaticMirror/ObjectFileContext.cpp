@@ -19,7 +19,9 @@
 #include "swift/RemoteInspection/TypeRefBuilder.h"
 #include "swift/Remote/CMemoryReader.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/MachOUniversal.h"
 
@@ -29,9 +31,11 @@
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/RelocationResolver.h"
+#include "llvm/Object/Wasm.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/StringSaver.h"
 
+#include <algorithm>
 #include <sstream>
 
 using namespace llvm::object;
@@ -266,6 +270,28 @@ void Image::scanCOFF(const llvm::object::COFFObjectFile *O) {
   Segments.push_back({HeaderAddress, O->getData()});
 }
 
+void Image::scanWasm(const llvm::object::WasmObjectFile *O) {
+  HeaderAddress = 0;
+
+  for (auto &Segment : O->dataSegments()) {
+    auto Offset = Segment.Data.Offset;
+    if (Offset.Extended != 0 || Offset.Inst.Opcode != llvm::wasm::WASM_OPCODE_I32_CONST) {
+      // Unsupported extended const init exprs.
+      continue;
+    }
+    auto SegmentBase = static_cast<uint64_t>(Offset.Inst.Value.Int32);
+    auto SegmentContent =
+        StringRef(reinterpret_cast<const char *>(Segment.Data.Content.data()),
+                  Segment.Data.Content.size());
+    if (SegmentContent.empty())
+      continue;
+
+    Segments.push_back({SegmentBase, SegmentContent});
+    // HeaderAddress = std::max(HeaderAddress, SegmentBase + SegmentContent.size());
+  }
+  // Segments.push_back({HeaderAddress, O->getData()});
+}
+
 bool Image::isMachOWithPtrAuth() const {
   auto macho = dyn_cast<llvm::object::MachOObjectFile>(O);
   if (!macho)
@@ -286,6 +312,8 @@ Image::Image(const llvm::object::ObjectFile *O) : O(O) {
     scanELF(elf);
   } else if (auto coff = dyn_cast<llvm::object::COFFObjectFile>(O)) {
     scanCOFF(coff);
+  } else if (auto wasm = dyn_cast<llvm::object::WasmObjectFile>(O)) {
+    scanWasm(wasm);
   } else {
     fputs("unsupported image format\n", stderr);
     abort();
@@ -550,7 +578,15 @@ std::unique_ptr<ReflectionContextHolder> makeReflectionContextForMetadataReader(
   auto context = new ReflectionContext(reader);
   auto &builder = context->getBuilder();
   for (unsigned i = 0, e = reader->getImages().size(); i < e; ++i) {
-    context->addImage(reader->getImageStartAddress(i));
+    auto &image = reader->getImages()[i].TheImage;
+    if (isa<WasmObjectFile>(image.getObjectFile())) {
+      StringRef data = image.getObjectFile()->getData();
+      reflection::ConstMemoryBlock imageFile(
+          static_cast<const void *>(data.data()), data.size());
+      context->readWasm(imageFile);
+    } else {
+      context->addImage(reader->getImageStartAddress(i));
+    }
   }
 
   ReflectionContextHolder *holder = new ReflectionContextHolder{
