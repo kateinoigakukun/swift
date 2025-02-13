@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/Markup/Markup.h"
-#include "cmark-gfm.h"
 #include "swift/AST/Comment.h"
 #include "swift/Basic/Assertions.h"
 #include "swift/Markup/LineList.h"
@@ -21,6 +20,10 @@
 
 using namespace swift;
 using namespace markup;
+
+#if __has_include("cmark-gfm.h")
+
+#include "cmark-gfm.h"
 
 struct ParseState {
   cmark_iter *Iter = nullptr;
@@ -351,3 +354,15 @@ Document *swift::markup::parseDocument(MarkupContext &MC, LineList &LL) {
 Document *swift::markup::parseDocument(MarkupContext &MC, StringRef String) {
   return parseDocumentImpl(MC, MC.allocateCopy(String));
 }
+
+#else
+
+Document *swift::markup::parseDocument(MarkupContext &MC, LineList &LL) {
+  return Document::create(MC, {});
+}
+
+Document *swift::markup::parseDocument(MarkupContext &MC, StringRef String) {
+  return Document::create(MC, {});
+}
+
+#endif

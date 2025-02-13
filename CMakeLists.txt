@@ -1471,6 +1471,8 @@ if(SWIFT_INCLUDE_TOOLS)
   add_subdirectory(lib)
 endif()
 
+# HACK: Exclude ./tools and ./SwiftCompilerSources from the build as lldb somehow implicitly depends on SwiftCompilerSources
+if(NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "Emscripten")
 ###############
 # PLEASE READ #
 ###############
@@ -1639,3 +1641,4 @@ if(SWIFT_ENABLE_NEW_RUNTIME_BUILD)
     endforeach()
   endforeach()
 endif()
+endif() # HACK: Exclude ./tools and ./SwiftCompilerSources from the build as lldb somehow implicitly depends on SwiftCompilerSources
