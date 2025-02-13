@@ -96,6 +96,28 @@ public:
     return true;
   }
 
+  bool readULEB128(RemoteAddress &address, uint64_t *dest) {
+    uint64_t value = 0;
+    uint32_t shift = 0;
+    uint8_t byte;
+    do {
+      if (!readBytes(address, &byte, 1))
+        return false;
+      uint64_t slice = byte & 0x7F;
+      if (LLVM_UNLIKELY(shift >= 63) &&
+          ((shift == 63 && (slice << shift >> shift) != slice) ||
+           (shift > 63 && slice != 0))) {
+        // too big for uint64
+        return false;
+      }
+      value += slice << shift;
+      shift += 7;
+      address += 1;
+    } while (byte >= 0x80);
+    *dest = value;
+    return true;
+  }
+
   template <typename T>
   ReadObjResult<T> readObj(RemoteAddress address) {
     auto bytes = readBytes(address, sizeof(T));

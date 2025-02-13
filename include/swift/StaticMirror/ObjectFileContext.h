@@ -53,6 +53,8 @@ private:
 
   void scanCOFF(const llvm::object::COFFObjectFile *O);
 
+  void scanWasm(const llvm::object::WasmObjectFile *O);
+
   bool isMachOWithPtrAuth() const;
 
 public:
@@ -121,6 +123,33 @@ public:
   remote::RemoteAbsolutePointer resolvePointer(reflection::RemoteAddress Addr,
                                                uint64_t pointerValue) override;
 
+  remote::RemoteAbsolutePointer
+  getDynamicSymbol(reflection::RemoteAddress Addr) override;
+};
+
+// A MemoryReader that reads from an image file content itself instead of
+// contents mapped to the memory space.
+class ImageReader : public reflection::MemoryReader {
+  ObjectMemoryReader &Parent;
+  const Image &TheImage;
+public:
+  ImageReader(ObjectMemoryReader &parent, const Image &image) : Parent(parent), TheImage(image) {}
+
+  bool queryDataLayout(DataLayoutQueryType type, void *inBuffer,
+                       void *outBuffer) override {
+    return Parent.queryDataLayout(type, inBuffer, outBuffer);
+  }
+
+  reflection::RemoteAddress getSymbolAddress(const std::string &name) override {
+    return reflection::RemoteAddress(nullptr);
+  }
+
+  ReadBytesResult readBytes(reflection::RemoteAddress Addr,
+                            uint64_t Size) override;
+  bool readString(reflection::RemoteAddress Addr, std::string &Dest) override;
+
+  remote::RemoteAbsolutePointer resolvePointer(reflection::RemoteAddress Addr,
+                                               uint64_t pointerValue) override;
   remote::RemoteAbsolutePointer
   getDynamicSymbol(reflection::RemoteAddress Addr) override;
 };
